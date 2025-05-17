@@ -38,11 +38,13 @@ BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'
 reply_keyboard = [['/help']]
 markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Добро пожаловать! Нажмите /help, чтобы узнать, что я умею.",
         reply_markup=markup
     )
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -50,11 +52,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=markup
     )
 
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     # TODO: распарсить запрос, кинуть запрос в нейронку
     result = text[::-1]
     await update.message.reply_text(result, reply_markup=markup)
+
 
 def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -67,6 +71,7 @@ def main():
 
     logger.info("Бот запущен...")
     app.run_polling()
+
 
 if __name__ == '__main__':
     main()
