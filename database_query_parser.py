@@ -11,6 +11,17 @@ class DbQueryParser:
         return ''
 
     @staticmethod
+    def search_person(data: dict) -> str:
+        for entity in data['entities']:
+            if entity['entity'] == 'name':
+                return f"""
+                    select birthday from names
+                    where name={entity['value']}
+                    """
+                # TODO: заменить names на таблицу сотрудников, откуда изъять день рождения
+        raise Exception
+    
+    @staticmethod
     def _parse_search_event(entities: list) -> str:
         keywords = DbQueryParser._entities_to_dict(entities)
         if 'event_name' in keywords:
