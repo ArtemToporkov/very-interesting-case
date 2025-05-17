@@ -4,6 +4,7 @@ class AiRequestProcessor:
         self.api_key = api_key
     
     def process_query(query: str) -> dict:
+
         return {
 
         }

@@ -7,6 +7,8 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+from ai_request_processor import AiRequestProcessor
+from database_query_parser import DbQueryParser
 
 from database import Database
 
@@ -28,6 +30,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+ai_request_processor = AiRequestProcessor()
+database_query_parser = DbQueryParser()
+
 BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'
 
 reply_keyboard = [['/help']]
@@ -41,7 +46,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Отправтье запрос, а я что-нибудь найду.",
+        "Отправьте запрос, а я что-нибудь найду.",
         reply_markup=markup
     )
 
