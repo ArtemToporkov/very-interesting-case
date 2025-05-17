@@ -8,6 +8,20 @@ from telegram.ext import (
     ContextTypes,
 )
 
+from database import Database
+
+
+DB_CONFIG = {
+        "dbname": "interesnich@localhost",
+        "user": "postgres",
+        "password": "123",
+        "host": "localhost",
+        "port": "5432"
+    }
+
+db = Database(**DB_CONFIG)
+
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
