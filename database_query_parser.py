@@ -1,7 +1,5 @@
 class DbQueryParser:
-    def __init__(self, data: dict):
-        self.data = data
-
-    def parse(self, data: dict) -> str:
-        # TODO: сделать парснг в запрос для бд
+    @staticmethod
+    def parse(data: dict) -> str:
+        # TODO: сделать парсинг в запрос для БД
         return ''
