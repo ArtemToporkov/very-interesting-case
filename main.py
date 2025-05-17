@@ -30,8 +30,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ai_request_processor = AiRequestProcessor()
-database_query_parser = DbQueryParser()
+ai_request_processor = AiRequestProcessor(base_url="http://localhost:5005/model/parse") # TODO: изменить потом адрес
 
 BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'
 
@@ -56,8 +55,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     # TODO: распарсить запрос, кинуть запрос в нейронку
-    result = text[::-1]
-    await update.message.reply_text(result, reply_markup=markup)
+    try:
+        ai_response = ai_request_processor.process_query(text)
+    except Exception as e:
+        await update.message.reply_text("Не удалось обработать запрос нейросетью.", reply_markup=markup)
+    else:
+        result = ai_response
+        await update.message.reply_text(str(result), reply_markup=markup)
 
 
 def main():
