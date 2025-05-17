@@ -3,10 +3,20 @@ import datetime
 MONTHS = ["january", "february", "march", "april", "may", "june","july", "august", "september","october", "november", "december"]
 DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 DAY_EXTENTIONS = ["rd", "th", "st", "nd"]
+
+
 class DbQueryParser:
     @staticmethod
     def parse(data: dict) -> str:
-        # TODO: сделать парсинг в запрос для БД
+        match data["intent"]["search_person"]:
+            case "search_person":
+                return DbQueryParser.search_person(data)
+            case "search_event":
+                return DbQueryParser.search_event(data)
+            case "find_birthday":
+                return DbQueryParser.find_birthday()
+            case "check_task":
+                return DbQueryParser.check_task()
 
         return ''
 
@@ -15,14 +25,15 @@ class DbQueryParser:
         for entity in data['entities']:
             if entity['entity'] == 'name':
                 return f"""
-                    select birthday from names
+                    select * from names
                     where name={entity['value']}
                     """
-                # TODO: заменить names на таблицу сотрудников, откуда изъять день рождения
-        raise Exception
-    
+                # TODO: заменить names на таблицу сотрудников
+        raise Exception("Данные не обнаружены")
+
     @staticmethod
-    def _parse_search_event(entities: list) -> str:
+    def search_event(data: dict) -> str:
+        entities: list = data['entities']
         keywords = DbQueryParser._entities_to_dict(entities)
         if 'event_name' in keywords:
             event_name = keywords['event_name']
@@ -37,28 +48,27 @@ class DbQueryParser:
         where 
         {event_name_contidion} and
         {date_contidion}"""
-        return result
+        return result # TODO: куда-то делся метод get_date, вернуть
 
     @staticmethod
-    def _parse_find_birthday(entities: list) -> str:
+    def find_birthday(entities: list) -> str:
         result = ""
         for entity in entities:
             if entity['name'] == 'date':
-                result = f"""select *
+                return f"""select *
                            from employees
                            where birthday = {entity['value']}"""
-                break
-        return result
+        raise Exception("Данные не обнаружены")
 
     @staticmethod
-    def _parse_check_task(entities: list) -> str:
+    def check_task(entities: list) -> str:
         result = ""
         for entity in entities:
             if entity['name'] == 'name':
-                result = f"""select * 
+                return f"""select * 
                             from tasks
                             where employee_name = {entity['value']}"""
-        return result
+        raise Exception("Данные не обнаружены")
 
 
     @staticmethod
