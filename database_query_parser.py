@@ -1,6 +1,16 @@
 # Файл: database_query_parser.py
+# Содержимое:
+# Файл: database_query_parser.py
 import datetime
 from psycopg2 import sql
+import logging  # Добавлено для логирования
+
+# Настройка логгера (если еще не настроен глобально)
+logger = logging.getLogger(__name__)
+# Пример базовой настройки, если необходимо:
+# if not logger.hasHandlers():
+#     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 
 # Словарь для преобразования названий месяцев и их форм в номера
 MONTH_NAME_TO_NUMBER = {
@@ -143,7 +153,7 @@ class DbQueryParser:
             if parsed_date:
                 return parsed_date, None, None  # Только начальная дата
         except ValueError:
-            print(f"Warning: Could not parse date string '{date_entity_value}' for event date.")
+            logger.warning(f"Warning: Could not parse date string '{date_entity_value}' for event date.")
 
         return None, None, None
 
@@ -155,10 +165,13 @@ class DbQueryParser:
             sql.SQL('ev."Begin" AS event_begin'),
             sql.SQL('ev."End" AS event_end'),  # <--- ИЗМЕНЕНО: выбираем End вместо Duration
             sql.SQL('cat."Name" AS category_name'),
-            sql.SQL('ev."Description" AS event_description'),  # Предполагаем, что полное имя "Description"
+            sql.SQL('ev."Description" AS event_description'),
             sql.SQL('emp."Name" AS organizer_name'),
             sql.SQL('emp."Surname" AS organizer_surname')
         ]
+        # Логирование выбранных полей для диагностики
+        # logger.info(f"DEBUG search_event: select_fields: {[str(f) for f in select_fields]}")
+
         from_table = sql.SQL('FROM "Event" AS ev')
         joins = [
             sql.SQL('LEFT JOIN "Categories" AS cat ON cat."Category_Id" = ev."CategoryId"'),
@@ -191,16 +204,9 @@ class DbQueryParser:
             date_val = entities['date'][0]
             start_date, end_date, special_sql_cond = DbQueryParser._parse_event_date_entity(date_val)
 
-            if special_sql_cond:  # Для "сегодня", "завтра" - применяется к Begin
+            if special_sql_cond:
                 where_clauses.append(special_sql_cond)
-            elif start_date and end_date:  # Диапазон дат - проверяем, что событие ПЕРЕСЕКАЕТСЯ с диапазоном
-                # Событие пересекается с [S, E] если (ev.Begin <= E) AND (ev.End IS NULL OR ev.End >= S)
-                # Если у события нет End, считаем, что оно длится до конца start_date или бессрочно в этот день.
-                # Для простоты, если есть диапазон, ищем события, начинающиеся в этом диапазоне.
-                # Более точное пересечение:
-                # where_clauses.append(sql.SQL('(ev."Begin"::date <= %s AND (ev."End" IS NULL OR ev."End"::date >= %s))'))
-                # params.extend([end_date, start_date])
-                # Пока оставим упрощенный поиск по дате начала:
+            elif start_date and end_date:
                 where_clauses.append(sql.SQL('ev."Begin"::date >= %s AND ev."Begin"::date <= %s'))
                 params.extend([start_date, end_date])
             elif start_date:
@@ -208,14 +214,15 @@ class DbQueryParser:
                 params.append(start_date)
 
         if 'location' in entities:
-            print(
+            logger.warning(
                 f"Warning: Event location filtering is not directly supported by 'Event' table schema. Entity: {entities['location'][0]}")
 
         if not where_clauses and not (
                 'date' in entities and DbQueryParser._parse_event_date_entity(entities['date'][0])[
-            2]):
-            print(
+            2]):  # Проверка, что если нет явных фильтров, то нет и спец.условий по дате типа "сегодня"
+            logger.info(
                 "Info: No specific criteria for event search. Will attempt to fetch upcoming events or based on default ordering.")
+            # Можно не добавлять WHERE, если нет условий, чтобы не было пустого "WHERE "
 
         query_parts = [
             sql.SQL("SELECT"),
@@ -224,12 +231,13 @@ class DbQueryParser:
             from_table
         ]
         query_parts.extend(joins)
-        if where_clauses:
+        if where_clauses:  # Только если есть условия, добавляем WHERE
             query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
 
         query_parts.append(sql.SQL('ORDER BY ev."Begin" ASC LIMIT 10'))
 
         final_query = sql.SQL(' ').join(query_parts)
+        # logger.info(f"DEBUG search_event: final_query: {final_query.as_string(None)}") # Для отладки строки запроса
         return final_query, params
 
     @staticmethod
@@ -311,14 +319,14 @@ class DbQueryParser:
                 where_clauses.append(sql.SQL('date_part(\'year\', age(emp."Birthday")) > %s'))
                 params.append(age)
             except ValueError:
-                print(f"Warning: could not parse age_older_than value: {entities['age_older_than'][0]}")
+                logger.warning(f"Warning: could not parse age_older_than value: {entities['age_older_than'][0]}")
         if 'age_younger_than' in entities:
             try:
                 age = int(entities['age_younger_than'][0])
                 where_clauses.append(sql.SQL('date_part(\'year\', age(emp."Birthday")) < %s'))
                 params.append(age)
             except ValueError:
-                print(f"Warning: could not parse age_younger_than value: {entities['age_younger_than'][0]}")
+                logger.warning(f"Warning: could not parse age_younger_than value: {entities['age_younger_than'][0]}")
         if not where_clauses:
             raise ValueError("Недостаточно критериев для поиска дней рождения.")
 
@@ -341,25 +349,30 @@ class DbQueryParser:
         entities = DbQueryParser._entities_to_dict(data.get('entities', []))
         select_fields = [
             sql.SQL('tsk."Name" AS task_name'),
-            sql.SQL('tsk."Description" AS task_description'),  # <--- ИСПРАВЛЕНО (предполагая полное имя "Description")
+            sql.SQL('tsk."Description" AS task_description'),
             sql.SQL('tsk."Begin" AS task_deadline'),
+            # В схеме Task.Begin - это дедлайн? Или это Task.Deadline? Проверьте имя поля.
             sql.SQL('emp_assignee."Name" AS assignee_name'),
             sql.SQL('emp_assignee."Surname" AS assignee_surname'),
             sql.SQL('prj."Name" AS project_name')
         ]
-        # ... (остальная часть метода check_task без изменений, если имя поля Description)
-        # ...
-        from_table = sql.SQL('FROM "Task" as tsk')
+        from_table = sql.SQL('FROM "Task" as tsk')  # Предполагаем таблицу "Task"
         joins = [
             sql.SQL('LEFT JOIN "Employees" as emp_assignee ON emp_assignee."Employee_Id" = tsk."EmployeeId"'),
+            # EmployeeId в Task
             sql.SQL('LEFT JOIN "Project" as prj ON prj."Project_Id" = emp_assignee."ProjectId"')
+            # ProjectId в Employees? Или в Task? В схеме Task.ProjectId нет.
+            # Если задачи привязаны к проекту напрямую, то JOIN Project к Task.
+            # Если задачи привязаны к сотруднику, а сотрудник к проекту, то как сейчас.
+            # Судя по схеме, Task.EmployeeId есть, а ProjectId у Task нет. Значит, текущий JOIN для проекта задачи через сотрудника.
         ]
         where_clauses = []
         params = []
-        if 'name' in entities:
+        if 'name' in entities:  # Имя исполнителя
             name_val = entities['name'][0]
             if name_val.lower() in ["мои", "меня", "я", "мне"]:
-                print("Warning: 'мои' задачи требуют ID текущего пользователя, который здесь не доступен.")
+                logger.warning("Warning: 'мои' задачи требуют ID текущего пользователя, который здесь не доступен.")
+                # raise ValueError("Поиск 'моих' задач пока не реализован.") # Или так
             else:
                 if ' ' in name_val:
                     parts = name_val.split(' ', 1)
@@ -370,40 +383,75 @@ class DbQueryParser:
                 else:
                     where_clauses.append(sql.SQL('(emp_assignee."Name" ILIKE %s OR emp_assignee."Surname" ILIKE %s)'))
                     params.extend([f"%{name_val}%", f"%{name_val}%"])
+
+        # Фильтр по проекту:
+        # Если Task связан с Project напрямую через Task.ProjectId, то JOIN должен быть `LEFT JOIN "Project" as prj ON prj."Project_Id" = tsk."ProjectId"`
+        # И условие `prj."Name" ILIKE %s`.
+        # Текущая логика фильтрует по проекту сотрудника, которому назначена задача.
         if 'project' in entities:
-            if not any('prj ON prj."Project_Id" = emp_assignee."ProjectId"' in str(j) for j in joins):
+            # Эта логика дублирования JOIN-а для проекта кажется избыточной, если prj уже есть.
+            # Проверяем, есть ли уже JOIN к Project, связанный с задачами (tsk) или сотрудником (emp_assignee)
+            project_join_exists = any(
+                ('prj ON prj."Project_Id" = emp_assignee."ProjectId"' in str(j)) or
+                ('prj ON prj."Project_Id" = tsk."ProjectId"' in str(j))  # Если бы Task.ProjectId существовал
+                for j in joins
+            )
+            if not project_join_exists:
+                # Если нет JOIN для проекта, добавляем его (предполагая связь через сотрудника)
                 joins.append(sql.SQL(
-                    'LEFT JOIN "Project" as prj_task_filter ON prj_task_filter."Project_Id" = emp_assignee."ProjectId"'))
+                    'LEFT JOIN "Project" AS prj_task_filter ON prj_task_filter."Project_Id" = emp_assignee."ProjectId"'))
                 where_clauses.append(sql.SQL('prj_task_filter."Name" ILIKE %s'))
-            else:
+            else:  # JOIN уже есть (назван prj), используем его
                 where_clauses.append(sql.SQL('prj."Name" ILIKE %s'))
             params.append(f"%{entities['project'][0]}%")
-        if 'date' in entities:
+
+        if 'date' in entities:  # Дедлайн задачи (предполагается поле Task.Begin или Task.Deadline)
             date_str = entities['date'][0]
+            # Используем поле "Begin" из таблицы Task, как указано в select_fields для task_deadline
+            # Схема показывает Task.Begin (TIMESTAMPTZ), Task.Duration (INTERVAL). Если есть Task.Deadline, лучше использовать его.
+            # Предположим, что Task.Begin - это дедлайн или дата начала, по которой можно фильтровать.
             if date_str.lower() == "сегодня":
                 where_clauses.append(sql.SQL('tsk."Begin"::date = CURRENT_DATE'))
             elif date_str.lower() == "завтра":
                 where_clauses.append(sql.SQL('tsk."Begin"::date = CURRENT_DATE + INTERVAL \'1 day\''))
-            elif "на эт" in date_str.lower() and "недел" in date_str.lower():
+            elif "на эт" in date_str.lower() and "недел" in date_str.lower():  # "на этой неделе"
                 where_clauses.append(sql.SQL(
                     'tsk."Begin"::date >= date_trunc(\'week\', CURRENT_DATE) AND tsk."Begin"::date < date_trunc(\'week\', CURRENT_DATE) + INTERVAL \'1 week\''))
             else:
                 try:
+                    # Попытка распарсить дату формата DD.MM.YYYY
                     parsed_date = datetime.datetime.strptime(date_str, "%d.%m.%Y").date()
                     where_clauses.append(sql.SQL('tsk."Begin"::date = %s'))
                     params.append(parsed_date)
                 except ValueError:
-                    print(f"Warning: Could not parse date string '{date_str}' for task deadline.")
-        if 'task_status' in entities: print(
-            f"Warning: Task status filtering not supported by DB schema. Entity: {entities['task_status'][0]}")
-        if 'task_priority' in entities: print(
-            f"Warning: Task priority filtering not supported by DB schema. Entity: {entities['task_priority'][0]}")
-        if 'task_tag' in entities: print(
-            f"Warning: Task tag filtering not supported by DB schema. Entity: {entities['task_tag'][0]}")
+                    logger.warning(f"Warning: Could not parse date string '{date_str}' for task deadline.")
+
+        # Поля Status, Priority, Tags не видны в схеме для таблицы "Task".
+        # Если они существуют, то фильтрация ниже корректна. Иначе - будут ошибки.
+        # Предположим, что они есть.
+        if 'task_status' in entities:
+            logger.warning(
+                f"Warning: Task status filtering relies on Task.Status column. Entity: {entities['task_status'][0]}")
+            where_clauses.append(sql.SQL('tsk."Status" ILIKE %s'))  # Предполагаем Task.Status
+            params.append(f"%{entities['task_status'][0]}%")
+        if 'task_priority' in entities:
+            logger.warning(
+                f"Warning: Task priority filtering relies on Task.Priority column. Entity: {entities['task_priority'][0]}")
+            where_clauses.append(sql.SQL('tsk."Priority" ILIKE %s'))  # Предполагаем Task.Priority
+            params.append(f"%{entities['task_priority'][0]}%")
+        if 'task_tag' in entities:
+            logger.warning(f"Warning: Task tag filtering relies on Task.Tags column. Entity: {entities['task_tag'][0]}")
+            where_clauses.append(sql.SQL('tsk."Tags" ILIKE %s'))  # Предполагаем Task.Tags (или JOIN на таблицу тегов)
+            params.append(f"%{entities['task_tag'][0]}%")
+
         if 'task_name' in entities:
             where_clauses.append(sql.SQL('tsk."Name" ILIKE %s'))
             params.append(f"%{entities['task_name'][0]}%")
+
         if not where_clauses:
+            # Если нет критериев, возможно, стоит вернуть ошибку или последние N задач
+            # текущего пользователя (если это возможно определить).
+            # Пока что, как и для ДР, требуем критерии.
             raise ValueError("Недостаточно критериев для поиска задач.")
 
         query_parts = [
@@ -415,6 +463,8 @@ class DbQueryParser:
         query_parts.extend(joins)
         if where_clauses:
             query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
+
+        # Сортировка: NULLS LAST для tsk."Begin" чтобы задачи без дедлайна были в конце
         query_parts.append(sql.SQL('ORDER BY tsk."Begin" ASC NULLS LAST LIMIT 10'))
         final_query = sql.SQL(' ').join(query_parts)
         return final_query, params
