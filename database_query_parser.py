@@ -23,7 +23,7 @@ class DbQueryParser:
         if quarter == 2: return datetime.date(year, 4, 1), datetime.date(year, 6, 30)
         if quarter == 3: return datetime.date(year, 7, 1), datetime.date(year, 9, 30)
         if quarter == 4: return datetime.date(year, 10, 1), datetime.date(year, 12, 31)
-        raise ValueError("Invalid quarter number")
+        raise ValueError("Что-то пошло не так.")
 
     @staticmethod
     def _get_current_quarter_info(date_obj: datetime.date) -> tuple[int, int]:
@@ -37,7 +37,7 @@ class DbQueryParser:
     def parse(data: dict):
         intent_name = data.get("intent", {}).get("name")
         if not intent_name:
-            raise ValueError("Intent name is missing in NLU data")
+            raise ValueError("Что-то пошло не так...")
 
         match intent_name:
             case "search_person":
@@ -49,7 +49,7 @@ class DbQueryParser:
             case "check_task":
                 return DbQueryParser.check_task(data)
         logger.warning(f"Intent '{intent_name}' is not configured for SQL query generation in DbQueryParser.")
-        raise ValueError(f"Неизвестный или нецелевой интент для SQL-парсера: {intent_name}")
+        raise ValueError(f"Что-то пошло не так...")
 
     @staticmethod
     def _split_name_surname(name_entity_value: str) -> tuple[str | None, str | None]:
@@ -69,7 +69,7 @@ class DbQueryParser:
         name_val = entities_dict.get('name', [None])[0]
 
         if not name_val:
-            raise ValueError("Сущность 'name' не найдена для search_person")
+            raise ValueError("Что-то пошло не так...")
 
         # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
         select_fields = [
