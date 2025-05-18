@@ -8,27 +8,45 @@ DAY_EXTENTIONS = ["rd", "th", "st", "nd"]
 class DbQueryParser:
     @staticmethod
     def parse(data: dict) -> str:
-        match data["intent"]["search_person"]:
+        match data["intent"]["name"]:
             case "search_person":
                 return DbQueryParser.search_person(data)
             case "search_event":
                 return DbQueryParser.search_event(data)
             case "find_birthday":
-                return DbQueryParser.find_birthday()
+                return DbQueryParser.find_birthday(data)
             case "check_task":
-                return DbQueryParser.check_task()
+                return DbQueryParser.check_task(data)
 
         return ''
 
     @staticmethod
     def search_person(data: dict) -> str:
+
         for entity in data['entities']:
             if entity['entity'] == 'name':
-                return f"""
-                    select * from names
-                    where name={entity['value']}
-                    """
-                # TODO: заменить names на таблицу сотрудников
+                return f'''
+                    select 
+                        'PersonInfo',
+                        emp."Surname", 
+                        emp."Name", 
+                        emp."Father", 
+                        emp."Birthday", 
+                        emp."FirstDay", 
+                        lng."Name", 
+                        rnk."Status",
+                        prj."Name",
+                        dprt."Name",
+                        emp."Contacts"
+                    from "Employees" as emp
+                    join "Classes" as cl on cl."Class_Id" = emp."ClassId" 
+                    join "Languages" as lng on lng."Language_Id"=emp."LanguageId"
+                    join "Rank" as rnk on rnk."Rank_Id" = emp."RankId"
+                    join "Project" as prj on prj."Project_Id"=emp."ProjectId"
+                    join "Department" as dprt on dprt."Department_Id"=emp."DepartmentId"
+                    where emp."Name"='{entity['value']}'
+                    limit 1;
+                    '''
         raise Exception("Данные не обнаружены")
 
     @staticmethod
@@ -51,23 +69,25 @@ class DbQueryParser:
         return result # TODO: куда-то делся метод get_date, вернуть
 
     @staticmethod
-    def find_birthday(entities: list) -> str:
-        result = ""
+    def find_birthday(data: dict) -> str:
+        entities = data['entities']
         for entity in entities:
-            if entity['name'] == 'date':
+            if entity['entity'] == 'date':
                 return f"""select *
                            from employees
                            where birthday = {entity['value']}"""
         raise Exception("Данные не обнаружены")
 
     @staticmethod
-    def check_task(entities: list) -> str:
-        result = ""
+    def check_task(data: dict) -> str:
+        entities = data['entities']
         for entity in entities:
             if entity['name'] == 'name':
-                return f"""select * 
-                            from tasks
-                            where employee_name = {entity['value']}"""
+                return f'''
+                select * 
+                from tasks
+                where employee_name = {entity['value']}
+                '''
         raise Exception("Данные не обнаружены")
 
 

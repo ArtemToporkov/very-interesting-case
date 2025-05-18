@@ -1,5 +1,7 @@
 import logging
+import requests
 from telegram import Update, ReplyKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -9,15 +11,16 @@ from telegram.ext import (
 )
 from ai_request_processor import AiRequestProcessor
 from database_query_parser import DbQueryParser
+from db_response_parser import DbResponseParser
 
 from database import Database
 
 
 DB_CONFIG = {
-        "dbname": "interesnich",
-        "user": "postgres",
-        "password": "postgres", # TODO: вставьте потом свой пароль
-        "host": "localhost",
+        "dbname": "interesich",
+        "user": "cock_userr",
+        "password": "ifconfigroute-3n", # TODO: вставьте потом свой пароль
+        "host": "51.250.112.217",
         "port": "5432"
     }
 
@@ -54,14 +57,20 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    # TODO: распарсить запрос, кинуть запрос в нейронку
     try:
         ai_response = ai_request_processor.process_query(text)
-    except Exception as e:
+        sql_query = DbQueryParser.parse(ai_response)
+        result = db.execute_query(query=sql_query, fetch=True)
+        if result is None:
+            message = "Извините, я ничего не нашёл..."
+        else:
+            message = DbResponseParser.parse_into_message(result[0])
+    except requests.exceptions.RequestException as e:
         await update.message.reply_text("Не удалось обработать запрос нейросетью.", reply_markup=markup)
+    except Exception as e:
+        await update.message.reply_text(f"Что-то пошло не так при составлении запроса: {e}", reply_markup=markup)
     else:
-        result = ai_response
-        await update.message.reply_text(str(result), reply_markup=markup)
+        await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
 def main():
@@ -79,3 +88,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
