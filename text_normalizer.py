@@ -1,9 +1,6 @@
-# Файл: text_normalizer.py
-# Содержимое:
 import pymorphy3
 import string
 
-# Инициализация анализатора pymorphy3
 morph = pymorphy3.MorphAnalyzer()
 
 

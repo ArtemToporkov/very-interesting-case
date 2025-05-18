@@ -1,6 +1,5 @@
 import os
 
-
 def gather_files_to_txt(root_folder, output_filename="combined_code.txt", ignore_dirs=None, ignore_extensions=None,
                         ignore_files=None):
     """

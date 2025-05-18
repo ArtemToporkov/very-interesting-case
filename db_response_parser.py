@@ -1,4 +1,3 @@
-# Файл: db_response_parser.py
 import textwrap
 import datetime
 
@@ -18,7 +17,7 @@ class DbResponseParser:
                 return DbResponseParser.parse_birthday_results(data_list)
             case "TaskList":
                 return DbResponseParser.parse_task_results(data_list)
-            case "EventList":  # ИЗМЕНЕНО
+            case "EventList":
                 return DbResponseParser.parse_event_results(data_list)
             case _:
                 return f"Неизвестный тип результата для отображения: {result_type}"
