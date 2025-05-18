@@ -1,5 +1,6 @@
 import logging
 import requests
+from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 ai_request_processor = AiRequestProcessor(base_url="http://localhost:5005/model/parse") # TODO: изменить потом адрес
 
-BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'
+BOT_TOKEN = '7947739921:AAG5dl3g0nLRIftfQJYSq4vrZcwoWS805ks'
 
 reply_keyboard = [['/help']]
 markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
