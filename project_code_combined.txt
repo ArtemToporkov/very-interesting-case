@@ -76,6 +76,7 @@ class Database:
 
 # Файл: database_query_parser.py
 # Содержимое:
+# Файл: database_query_parser.py
 import datetime
 from psycopg2 import sql
 
@@ -98,30 +99,29 @@ MONTH_NAME_TO_NUMBER = {
 
 class DbQueryParser:
     @staticmethod
-    def parse(data: dict):  # -> Union[str, Tuple[sql.Composed, list]]: # Python 3.9 needs Tuple from typing
+    def parse(data: dict):
         intent_name = data.get("intent", {}).get("name")
         if not intent_name:
             raise ValueError("Intent name is missing in NLU data")
 
         match intent_name:
             case "search_person":
-                return DbQueryParser.search_person(data)
+                # Этот метод все еще возвращает строку, хорошо бы переделать
+                query_str = DbQueryParser.search_person_str(data)
+                return query_str, None  # Возвращаем как кортеж для единообразия
             case "search_event":
-                return DbQueryParser.search_event(data)  # This still needs get_date and parameterization
+                return DbQueryParser.search_event(data)  # ИЗМЕНЕНО
             case "find_birthday":
                 return DbQueryParser.find_birthday(data)
             case "check_task":
                 return DbQueryParser.check_task(data)
-            # Добавьте сюда другие интенты, если они будут
-
         raise ValueError(f"Неизвестный интент: {intent_name}")
 
     @staticmethod
-    def search_person(data: dict) -> str:
-        # ЭТОТ МЕТОД ВСЕ ЕЩЕ ИСПОЛЬЗУЕТ ФОРМАТИРОВАНИЕ СТРОК - РЕКОМЕНДУЕТСЯ РЕФАКТОРИНГ
+    def search_person_str(data: dict) -> str:
         for entity in data.get('entities', []):
             if entity.get('entity') == 'name':
-                # SQL-инъекция возможна здесь!
+                # ОСТОРОЖНО: SQL-инъекция! Этот метод должен быть переписан с использованием параметризации.
                 return f'''
                     SELECT 
                         'PersonInfo',
@@ -143,66 +143,187 @@ class DbQueryParser:
                     WHERE emp."Name" ILIKE '%{entity['value']}%' OR emp."Surname" ILIKE '%{entity['value']}%'
                     LIMIT 1;
                     '''
-        # Возвращаем пустую строку или специфический запрос, если имя не найдено,
-        # чтобы избежать ошибки в main.py, если интент search_person, но нет имени.
-        # Либо можно выбросить исключение, которое будет обработано в main.py.
-        # Для консистентности с find_birthday, лучше выбрасывать исключение, если нет ключевых данных.
         raise ValueError("Сущность 'name' не найдена для search_person")
 
     @staticmethod
-    def search_event(data: dict) -> str:
-        # ЭТОТ МЕТОД ТРЕБУЕТ get_date() И ПАРАМЕТРИЗАЦИИ
-        entities: list = data.get('entities', [])
-        keywords = DbQueryParser._entities_to_dict(entities)
-
-        where_clauses = []
-        if 'event_name' in keywords:
-            # SQL-инъекция возможна здесь!
-            where_clauses.append(f"""ev."Name" ILIKE '%{keywords['event_name'][0]}%'""")
-        if 'date' in keywords:
-            # Здесь должна быть логика get_date и корректное форматирование даты
-            # Пока что это заглушка, предполагающая, что get_date вернет строку YYYY-MM-DD
-            # date_str = DbQueryParser.get_date_placeholder(keywords['date'][0])
-            # where_clauses.append(f"""ev."Begin" >= '{date_str}'""") # Пример
-            where_clauses.append("1=1")  # Заглушка, чтобы запрос был валидным
-
-        # if 'location' in keywords: ...
-        # if 'event_category' in keywords: ...
-
-        query_str = """
-            SELECT 'EventInfo', ev."Name", ev."Begin", ev."Duration", cat."Name" as "CategoryName"
-            FROM "Events" as ev
-            LEFT JOIN "Categories" as cat ON cat."Category_Id" = ev."CategoryId"
+    def _parse_event_date_entity(date_entity_value: str) -> tuple[
+        datetime.date | None, datetime.date | None, str | None]:
         """
-        if where_clauses:
-            query_str += " WHERE " + " AND ".join(where_clauses)
-        query_str += " LIMIT 5;"
+        Парсит значение сущности 'date' для событий.
+        Возвращает (start_date, end_date, special_condition_sql)
+        special_condition_sql используется для "сегодня", "завтра".
+        end_date используется для диапазонов типа "на этой неделе", "в этом месяце".
+        """
+        date_lower = date_entity_value.lower()
+        today = datetime.date.today()
 
-        print(f"[DEBUG] search_event SQL (needs proper date handling & parameterization): {query_str}")
-        return query_str
+        if date_lower == "сегодня":
+            return today, None, sql.SQL('ev."Begin"::date = CURRENT_DATE')
+        if date_lower == "завтра":
+            tomorrow = today + datetime.timedelta(days=1)
+            return tomorrow, None, sql.SQL('ev."Begin"::date = CURRENT_DATE + INTERVAL \'1 day\'')
+
+        if "на эт" in date_lower and "недел" in date_lower:  # "на этой неделе"
+            start_of_week = today - datetime.timedelta(days=today.weekday())
+            end_of_week = start_of_week + datetime.timedelta(days=6)
+            return start_of_week, end_of_week, None
+
+        if "в эт" in date_lower and "месяц" in date_lower:  # "в этом месяце"
+            start_of_month = today.replace(day=1)
+            next_month = start_of_month.replace(month=start_of_month.month % 12 + 1, day=1)
+            if start_of_month.month == 12:  # Обработка декабря
+                next_month = start_of_month.replace(year=start_of_month.year + 1, month=1, day=1)
+            end_of_month = next_month - datetime.timedelta(days=1)
+            return start_of_month, end_of_month, None
+
+        # Попытка распарсить месяц типа "в июне"
+        for month_name, month_number in MONTH_NAME_TO_NUMBER.items():
+            if month_name in date_lower:
+                year_to_use = today.year  # По умолчанию текущий год
+                # Можно добавить логику для "в июне следующего года" если нужно
+                start_of_month = datetime.date(year_to_use, month_number, 1)
+                next_month_day_one = start_of_month.replace(month=start_of_month.month % 12 + 1, day=1)
+                if start_of_month.month == 12:
+                    next_month_day_one = start_of_month.replace(year=start_of_month.year + 1, month=1, day=1)
+                end_of_month = next_month_day_one - datetime.timedelta(days=1)
+                return start_of_month, end_of_month, None
+
+        # Попытка распарсить конкретную дату "DD.MM.YYYY" или "DD MMMM"
+        # Это очень упрощенный парсер, для более надежного нужен Duckling или regex
+        try:
+            # Попытка "25 мая", "10 июня"
+            parts = date_lower.split()
+            if len(parts) == 2 and parts[0].isdigit():
+                day = int(parts[0])
+                month_str = parts[1]
+                month_num = None
+                for mn, mnum in MONTH_NAME_TO_NUMBER.items():
+                    if mn.startswith(month_str):  # Ищем по началу слова
+                        month_num = mnum
+                        break
+                if month_num:
+                    parsed_date = datetime.date(today.year, month_num, day)
+                    return parsed_date, None, None  # Только начальная дата, без диапазона
+        except (ValueError, IndexError):
+            pass
+
+        try:
+            # Попытка "DD.MM.YYYY" или "DD.MM"
+            # Это место требует более надежного парсинга дат
+            parsed_date = None
+            if '.' in date_entity_value:
+                date_parts = date_entity_value.split('.')
+                if len(date_parts) == 2:  # DD.MM
+                    parsed_date = datetime.datetime.strptime(f"{date_parts[0]}.{date_parts[1]}.{today.year}",
+                                                             "%d.%m.%Y").date()
+                elif len(date_parts) == 3:  # DD.MM.YYYY
+                    parsed_date = datetime.datetime.strptime(date_entity_value, "%d.%m.%Y").date()
+            if parsed_date:
+                return parsed_date, None, None  # Только начальная дата
+        except ValueError:
+            print(f"Warning: Could not parse date string '{date_entity_value}' for event date.")
+
+        return None, None, None
+
+    @staticmethod
+    def search_event(data: dict):
+        entities = DbQueryParser._entities_to_dict(data.get('entities', []))
+        select_fields = [
+            sql.SQL('ev."Name" AS event_name'),
+            sql.SQL('ev."Begin" AS event_begin'),
+            sql.SQL('ev."Duration" AS event_duration'),
+            sql.SQL('cat."Name" AS category_name'),
+            sql.SQL('ev."Descri..." AS event_description'),  # В схеме "Descri..."
+            sql.SQL('emp."Name" AS organizer_name'),  # Если EmployeeId в Event это организатор
+            sql.SQL('emp."Surname" AS organizer_surname')
+        ]
+        from_table = sql.SQL('FROM "Event" AS ev')  # Таблица Event, согласно схеме
+        joins = [
+            sql.SQL('LEFT JOIN "Categories" AS cat ON cat."Category_Id" = ev."CategoryId"'),
+            sql.SQL('LEFT JOIN "Employees" AS emp ON emp."Employee_Id" = ev."EmployeeId"')
+            # Предполагаем, что EmployeeId в Event - это ID организатора/ответственного
+        ]
+        where_clauses = []
+        params = []
+
+        if 'event_name' in entities:
+            where_clauses.append(sql.SQL('ev."Name" ILIKE %s'))
+            params.append(f"%{entities['event_name'][0]}%")
+
+        if 'event_category' in entities:
+            where_clauses.append(sql.SQL('cat."Name" ILIKE %s'))
+            params.append(f"%{entities['event_category'][0]}%")
+
+        if 'organizer' in entities:  # Если ищем по имени организатора
+            name_val = entities['organizer'][0]
+            if ' ' in name_val:
+                parts = name_val.split(' ', 1)
+                where_clauses.append(sql.SQL(
+                    '((emp."Name" ILIKE %s AND emp."Surname" ILIKE %s) OR (emp."Name" ILIKE %s AND emp."Surname" ILIKE %s))'
+                ))
+                params.extend([f"%{parts[0]}%", f"%{parts[1]}%", f"%{parts[1]}%", f"%{parts[0]}%"])
+            else:
+                where_clauses.append(sql.SQL('(emp."Name" ILIKE %s OR emp."Surname" ILIKE %s)'))
+                params.extend([f"%{name_val}%", f"%{name_val}%"])
+
+        # Обработка сущности 'date'
+        if 'date' in entities:
+            # NLU может вернуть несколько дат, если текст содержит диапазон или несколько упоминаний
+            # Для простоты возьмем первую сущность 'date'
+            date_val = entities['date'][0]
+            start_date, end_date, special_sql_cond = DbQueryParser._parse_event_date_entity(date_val)
+
+            if special_sql_cond:
+                where_clauses.append(special_sql_cond)
+            elif start_date and end_date:  # Диапазон дат (напр. "на этой неделе")
+                where_clauses.append(sql.SQL('ev."Begin"::date >= %s AND ev."Begin"::date <= %s'))
+                params.extend([start_date, end_date])
+            elif start_date:  # Конкретная дата или начало диапазона (напр. "25 мая")
+                where_clauses.append(sql.SQL('ev."Begin"::date = %s'))
+                params.append(start_date)
+
+        # Фильтрация по местоположению ('location') не реализована, т.к. в таблице Event нет такого поля.
+        # Если 'location' это, например, название комнаты из отдельной таблицы, нужен будет доп. JOIN.
+        if 'location' in entities:
+            print(
+                f"Warning: Event location filtering is not directly supported by 'Event' table schema. Entity: {entities['location'][0]}")
+
+        # Если нет никаких условий, запрос может вернуть слишком много данных.
+        # Можно добавить условие по умолчанию, например, показывать события на ближайшую неделю,
+        # или требовать хотя бы одно условие. Пока оставим так.
+        if not where_clauses and not (
+                'date' in entities and DbQueryParser._parse_event_date_entity(entities['date'][0])[
+            2]):  # Если нет обычных where и нет special_sql_cond для даты
+            # Можно по умолчанию искать события на сегодня, если ничего не указано
+            where_clauses.append(sql.SQL('ev."Begin"::date = CURRENT_DATE'))
+            print("Info: No specific criteria for event search, defaulting to today's events.")
+
+        query_parts = [
+            sql.SQL("SELECT"),
+            sql.SQL("'EventList',"),
+            sql.SQL(", ").join(select_fields),
+            from_table
+        ]
+        query_parts.extend(joins)
+        if where_clauses:
+            query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
+
+        query_parts.append(sql.SQL('ORDER BY ev."Begin" ASC LIMIT 10'))
+
+        final_query = sql.SQL(' ').join(query_parts)
+        return final_query, params
 
     @staticmethod
     def _get_month_day_from_specifier(specifier_value: str) -> tuple[int | None, int | None, str | None]:
-        """ Пытается извлечь месяц и день из текстового спецификатора.
-            Возвращает (месяц, день,特殊SQLусловие)
-        """
         specifier_lower = specifier_value.lower()
-
-        # "сегодня", "завтра"
         if specifier_lower == "сегодня":
             return None, None, "TO_CHAR(emp.\"Birthday\", 'MM-DD') = TO_CHAR(CURRENT_DATE, 'MM-DD')"
         if specifier_lower == "завтра":
             return None, None, "TO_CHAR(emp.\"Birthday\", 'MM-DD') = TO_CHAR(CURRENT_DATE + INTERVAL '1 day', 'MM-DD')"
-
-        # "на этой неделе" - сложно для годовой повторяемости, лучше на уровне приложения или более сложный SQL
-        # "в этом месяце"
         if specifier_lower == "в этом месяце":
             return datetime.date.today().month, None, None
-
-        # "в <месяц>"
         for month_name, month_number in MONTH_NAME_TO_NUMBER.items():
             if month_name in specifier_lower:
-                # Попробуем найти число (день) перед или после месяца
                 parts = specifier_lower.replace(month_name, "").strip().split()
                 day = None
                 for part in parts:
@@ -210,8 +331,6 @@ class DbQueryParser:
                         day = int(part)
                         break
                 return month_number, day, None
-
-        # Простые сезоны (примерная реализация)
         if "зимой" in specifier_lower or "зима" in specifier_lower:
             return None, None, "EXTRACT(MONTH FROM emp.\"Birthday\") IN (12, 1, 2)"
         if "весной" in specifier_lower or "весна" in specifier_lower:
@@ -220,84 +339,53 @@ class DbQueryParser:
             return None, None, "EXTRACT(MONTH FROM emp.\"Birthday\") IN (6, 7, 8)"
         if "осенью" in specifier_lower or "осень" in specifier_lower:
             return None, None, "EXTRACT(MONTH FROM emp.\"Birthday\") IN (9, 10, 11)"
-
-        return None, None, None  # Не удалось распознать
+        return None, None, None
 
     @staticmethod
-    def find_birthday(data: dict):  # -> Tuple[sql.Composed, list]
+    def find_birthday(data: dict):
         entities = DbQueryParser._entities_to_dict(data.get('entities', []))
-
         select_fields = [
             sql.SQL('emp."Surname"'),
             sql.SQL('emp."Name"'),
             sql.SQL('emp."Father"'),
             sql.SQL('emp."Birthday"'),
-            sql.SQL('dprt."Name"').AS('department_name'),
-            # sql.SQL('prj."Name"').AS('project_name') # Если нужно будет фильтровать/отображать проект
+            sql.SQL('dprt."Name" AS department_name'),
         ]
         from_table = sql.SQL('FROM "Employees" as emp')
         joins = [
             sql.SQL('LEFT JOIN "Department" as dprt ON dprt."Department_Id" = emp."DepartmentId"'),
-            # sql.SQL('LEFT JOIN "Project" as prj ON prj."Project_Id" = emp."ProjectId"')
         ]
         where_clauses = []
         params = []
-
-        # Обработка birthday_specifier и date
-        # Приоритет отдается birthday_specifier, если есть оба
         date_entity_values = entities.get('date', [])
-        birthday_specifiers = entities.get('birthday_specifier',
-                                           date_entity_values)  # Используем date, если нет specifier
-
-        processed_date_condition = False
+        birthday_specifiers = entities.get('birthday_specifier', date_entity_values)
         if birthday_specifiers:
-            # Берем первый попавшийся спецификатор/дату для простоты
-            # В более сложной системе можно было бы обрабатывать диапазоны и т.д.
             specifier_val = birthday_specifiers[0]
             month, day, special_sql = DbQueryParser._get_month_day_from_specifier(specifier_val)
             if special_sql:
                 where_clauses.append(sql.SQL(special_sql))
-                processed_date_condition = True
             elif month:
                 where_clauses.append(sql.SQL('EXTRACT(MONTH FROM emp."Birthday") = %s'))
                 params.append(month)
                 if day:
                     where_clauses.append(sql.SQL('EXTRACT(DAY FROM emp."Birthday") = %s'))
                     params.append(day)
-                processed_date_condition = True
-
-        # Если ни один спецификатор/дата не обработан, и есть общие запросы без даты
-        # (например, "дни рождения в отделе маркетинга" - это на весь год), то условие по дате не добавляем.
-        # Если интент find_birthday, но нет даты, это может быть запрос на ДР конкретного человека.
-        # if not processed_date_condition and not entities.get('name'):
-        #     raise ValueError("Не указан период или дата для поиска дней рождения.")
-
         if 'department' in entities:
-            # Проверяем, есть ли уже JOIN для Department, чтобы не дублировать
-            if not any('dprt ON' in str(j) for j in joins):  # Простая проверка
+            if not any('dprt ON' in str(j) for j in joins):
                 joins.append(sql.SQL('LEFT JOIN "Department" as dprt ON dprt."Department_Id" = emp."DepartmentId"'))
             where_clauses.append(sql.SQL('dprt."Name" ILIKE %s'))
             params.append(f"%{entities['department'][0]}%")
-
-        # if 'project' in entities:
-        #     if not any('prj ON' in str(j) for j in joins):
-        #         joins.append(sql.SQL('LEFT JOIN "Project" as prj ON prj."Project_Id" = emp."ProjectId"'))
-        #     where_clauses.append(sql.SQL('prj."Name" ILIKE %s'))
-        #     params.append(f"%{entities['project'][0]}%")
-
         if 'name' in entities:
             name_val = entities['name'][0]
-            # Если имя содержит пробел, скорее всего это Имя + Фамилия или наоборот
             if ' ' in name_val:
                 parts = name_val.split(' ', 1)
                 where_clauses.append(sql.SQL(
                     '((emp."Name" ILIKE %s AND emp."Surname" ILIKE %s) OR (emp."Name" ILIKE %s AND emp."Surname" ILIKE %s))'
                 ))
                 params.extend([f"%{parts[0]}%", f"%{parts[1]}%", f"%{parts[1]}%", f"%{parts[0]}%"])
-            else:  # Иначе ищем по имени или фамилии
+            else:
                 where_clauses.append(sql.SQL('(emp."Name" ILIKE %s OR emp."Surname" ILIKE %s)'))
                 params.extend([f"%{name_val}%", f"%{name_val}%"])
-
         if 'age_older_than' in entities:
             try:
                 age = int(entities['age_older_than'][0])
@@ -305,7 +393,6 @@ class DbQueryParser:
                 params.append(age)
             except ValueError:
                 print(f"Warning: could not parse age_older_than value: {entities['age_older_than'][0]}")
-
         if 'age_younger_than' in entities:
             try:
                 age = int(entities['age_younger_than'][0])
@@ -313,57 +400,46 @@ class DbQueryParser:
                 params.append(age)
             except ValueError:
                 print(f"Warning: could not parse age_younger_than value: {entities['age_younger_than'][0]}")
-
-        if not where_clauses:  # Если нет условий, то запрос может вернуть слишком много.
+        if not where_clauses:
             raise ValueError("Недостаточно критериев для поиска дней рождения.")
 
-        query_parts = [sql.SQL("SELECT 'BirthdayList',")]
-        query_parts.extend(select_fields)
-        query_parts.append(from_table)
+        query_parts = [
+            sql.SQL("SELECT"),
+            sql.SQL("'BirthdayList',"),
+            sql.SQL(", ").join(select_fields),
+            from_table
+        ]
         query_parts.extend(joins)
-
-        query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
+        if where_clauses:
+            query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
         query_parts.append(sql.SQL(
             'ORDER BY EXTRACT(MONTH FROM emp."Birthday"), EXTRACT(DAY FROM emp."Birthday"), emp."Surname", emp."Name" LIMIT 10'))
-
         final_query = sql.SQL(' ').join(query_parts)
         return final_query, params
 
     @staticmethod
-    def check_task(data: dict):  # -> Tuple[sql.Composed, list]
+    def check_task(data: dict):
         entities = DbQueryParser._entities_to_dict(data.get('entities', []))
-
         select_fields = [
-            sql.SQL('tsk."Name"').AS('task_name'),
-            sql.SQL('tsk."Description"'),
-            sql.SQL('tsk."Deadline"'),
-            sql.SQL('tsk."Status"'),
-            sql.SQL('tsk."Priority"'),
-            sql.SQL('emp_assignee."Name"').AS('assignee_name'),
-            sql.SQL('emp_assignee."Surname"').AS('assignee_surname'),
-            sql.SQL('prj."Name"').AS('project_name')
+            sql.SQL('tsk."Name" AS task_name'),
+            sql.SQL('tsk."Descri..." AS task_description'),
+            sql.SQL('tsk."Begin" AS task_deadline'),
+            sql.SQL('emp_assignee."Name" AS assignee_name'),
+            sql.SQL('emp_assignee."Surname" AS assignee_surname'),
+            sql.SQL('prj."Name" AS project_name')
         ]
-        from_table = sql.SQL('FROM "Tasks" as tsk')  # Предполагаем, что таблица Tasks
+        from_table = sql.SQL('FROM "Task" as tsk')
         joins = [
-            sql.SQL('LEFT JOIN "Employees" as emp_assignee ON emp_assignee."Employee_Id" = tsk."AssigneeId"'),
-            # Предполагаем AssigneeId
-            sql.SQL('LEFT JOIN "Project" as prj ON prj."Project_Id" = tsk."ProjectId"')  # Предполагаем ProjectId
+            sql.SQL('LEFT JOIN "Employees" as emp_assignee ON emp_assignee."Employee_Id" = tsk."EmployeeId"'),
+            sql.SQL('LEFT JOIN "Project" as prj ON prj."Project_Id" = emp_assignee."ProjectId"')
         ]
         where_clauses = []
         params = []
-
-        # Если есть "мои", ищем задачи текущего пользователя (потребуется ID пользователя, здесь не доступен)
-        # Пока что, если есть name, ищем по нему. Если "мои", это нужно обработать на более высоком уровне
-        # или передать user_id в этот парсер.
         if 'name' in entities:
             name_val = entities['name'][0]
-            if name_val.lower() in ["мои", "меня", "я", "мне"]:  # Обработка "моих" задач
-                # Здесь нужна логика для получения ID текущего пользователя.
-                # Для примера, поставим заглушку или пропустим, если ID не доступен.
-                # where_clauses.append(sql.SQL('tsk."AssigneeId" = %s'))
-                # params.append(current_user_id) # current_user_id должен быть передан
+            if name_val.lower() in ["мои", "меня", "я", "мне"]:
                 print("Warning: 'мои' задачи требуют ID текущего пользователя, который здесь не доступен.")
-            else:  # Поиск по имени сотрудника
+            else:
                 if ' ' in name_val:
                     parts = name_val.split(' ', 1)
                     where_clauses.append(sql.SQL(
@@ -373,70 +449,64 @@ class DbQueryParser:
                 else:
                     where_clauses.append(sql.SQL('(emp_assignee."Name" ILIKE %s OR emp_assignee."Surname" ILIKE %s)'))
                     params.extend([f"%{name_val}%", f"%{name_val}%"])
-
         if 'project' in entities:
-            where_clauses.append(sql.SQL('prj."Name" ILIKE %s'))
+            if not any('prj ON prj."Project_Id" = emp_assignee."ProjectId"' in str(j) for j in joins):
+                joins.append(sql.SQL(
+                    'LEFT JOIN "Project" as prj_task_filter ON prj_task_filter."Project_Id" = emp_assignee."ProjectId"'))
+                where_clauses.append(sql.SQL('prj_task_filter."Name" ILIKE %s'))
+            else:
+                where_clauses.append(sql.SQL('prj."Name" ILIKE %s'))
             params.append(f"%{entities['project'][0]}%")
-
-        if 'date' in entities:  # дедлайн
-            # Нужна более умная обработка дат ("на сегодня", "на эту неделю")
-            # Для примера, если дата в формате YYYY-MM-DD
-            try:
-                # Предположим, что NLU возвращает дату в каком-то формате, который можно преобразовать
-                # Это очень упрощенно. Duckling бы дал структурированную дату.
-                date_str = entities['date'][0]  # Например, "сегодня"
-                if date_str == "сегодня":
-                    where_clauses.append(sql.SQL('tsk."Deadline"::date = CURRENT_DATE'))
-                elif date_str == "на этот месяц":
-                    where_clauses.append(sql.SQL(
-                        'EXTRACT(MONTH FROM tsk."Deadline") = EXTRACT(MONTH FROM CURRENT_DATE) AND EXTRACT(YEAR FROM tsk."Deadline") = EXTRACT(YEAR FROM CURRENT_DATE)'))
-
-                # Добавить другие варианты обработки date
-            except Exception as e:
-                print(f"Error parsing date for task: {e}")
-
-        if 'task_status' in entities:
-            where_clauses.append(sql.SQL('tsk."Status" ILIKE %s'))
-            params.append(f"%{entities['task_status'][0]}%")
-
-        if 'task_priority' in entities:
-            # Может потребоваться маппинг ("высокий" -> High)
-            where_clauses.append(sql.SQL('tsk."Priority" ILIKE %s'))
-            params.append(f"%{entities['task_priority'][0]}%")
-
-        if 'task_tag' in entities:
-            # Если теги в отдельной таблице, нужен JOIN
-            # Пока предположим, что тег это текстовое поле в Tasks
-            where_clauses.append(sql.SQL('tsk."Tags" ILIKE %s'))  # Предполагаем поле "Tags"
-            params.append(f"%{entities['task_tag'][0]}%")
-
+        if 'date' in entities:
+            date_str = entities['date'][0]
+            if date_str.lower() == "сегодня":
+                where_clauses.append(sql.SQL('tsk."Begin"::date = CURRENT_DATE'))
+            elif date_str.lower() == "завтра":
+                where_clauses.append(sql.SQL('tsk."Begin"::date = CURRENT_DATE + INTERVAL \'1 day\''))
+            elif "на эт" in date_str.lower() and "недел" in date_str.lower():
+                where_clauses.append(sql.SQL(
+                    'tsk."Begin"::date >= date_trunc(\'week\', CURRENT_DATE) AND tsk."Begin"::date < date_trunc(\'week\', CURRENT_DATE) + INTERVAL \'1 week\''))
+            else:
+                try:
+                    parsed_date = datetime.datetime.strptime(date_str, "%d.%m.%Y").date()
+                    where_clauses.append(sql.SQL('tsk."Begin"::date = %s'))
+                    params.append(parsed_date)
+                except ValueError:
+                    print(f"Warning: Could not parse date string '{date_str}' for task deadline.")
+        if 'task_status' in entities: print(
+            f"Warning: Task status filtering not supported by DB schema. Entity: {entities['task_status'][0]}")
+        if 'task_priority' in entities: print(
+            f"Warning: Task priority filtering not supported by DB schema. Entity: {entities['task_priority'][0]}")
+        if 'task_tag' in entities: print(
+            f"Warning: Task tag filtering not supported by DB schema. Entity: {entities['task_tag'][0]}")
         if 'task_name' in entities:
             where_clauses.append(sql.SQL('tsk."Name" ILIKE %s'))
             params.append(f"%{entities['task_name'][0]}%")
-
         if not where_clauses:
             raise ValueError("Недостаточно критериев для поиска задач.")
 
-        query_parts = [sql.SQL("SELECT 'TaskList',")]
-        query_parts.extend(select_fields)
-        query_parts.append(from_table)
+        query_parts = [
+            sql.SQL("SELECT"),
+            sql.SQL("'TaskList',"),
+            sql.SQL(", ").join(select_fields),
+            from_table
+        ]
         query_parts.extend(joins)
-
-        query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
-        query_parts.append(sql.SQL('ORDER BY tsk."Deadline", tsk."Priority" DESC LIMIT 10'))
-
+        if where_clauses:
+            query_parts.append(sql.SQL("WHERE ") + sql.SQL(" AND ").join(where_clauses))
+        query_parts.append(sql.SQL('ORDER BY tsk."Begin" ASC NULLS LAST LIMIT 10'))
         final_query = sql.SQL(' ').join(query_parts)
         return final_query, params
 
     @staticmethod
     def _entities_to_dict(entities: list) -> dict:
         result = {}
-        if not entities:  # Проверка, что entities не None и не пустой
+        if not entities:
             return result
         for entity in entities:
             entity_type = entity.get("entity")
             entity_value = entity.get("value")
-            if entity_type and entity_value is not None:  # Проверка, что ключи существуют
+            if entity_type and entity_value is not None:
                 if entity_type not in result:
                     result[entity_type] = [entity_value]
                 else:
@@ -447,6 +517,7 @@ class DbQueryParser:
 
 # Файл: db_response_parser.py
 # Содержимое:
+# Файл: db_response_parser.py
 import textwrap
 import datetime
 
@@ -454,37 +525,30 @@ import datetime
 class DbResponseParser:
     @staticmethod
     def parse_into_message(data_list: list) -> str:
-        if not data_list or not data_list[0]:  # Проверка на пустой результат
+        if not data_list or not data_list[0]:
             return "По вашему запросу ничего не найдено."
-
-        # data_list это список записей (кортежей/DictRow) из БД
-        # Первая запись содержит тип результата в первом элементе
         first_record = data_list[0]
-        result_type = first_record[0]  # Первый столбец должен быть типом результата
+        result_type = first_record[0]
 
         match result_type:
             case "PersonInfo":
-                # Для PersonInfo, мы ожидаем одну запись в data_list, так как LIMIT 1
-                return DbResponseParser.parse_person(first_record)  # Передаем одну запись
+                return DbResponseParser.parse_person(first_record)
             case "BirthdayList":
                 return DbResponseParser.parse_birthday_results(data_list)
             case "TaskList":
                 return DbResponseParser.parse_task_results(data_list)
-            # Добавьте сюда обработку других типов результатов
+            case "EventList":  # ИЗМЕНЕНО
+                return DbResponseParser.parse_event_results(data_list)
             case _:
                 return f"Неизвестный тип результата для отображения: {result_type}"
 
     @staticmethod
-    def parse_person(data_row: tuple) -> str:  # data_row это одна запись (кортеж/DictRow)
-        # data_row[0] это 'PersonInfo', начинаем с data_row[1]
+    def parse_person(data_row: tuple) -> str:
         contacts = data_row[10] if len(data_row) > 10 and data_row[10] else {}
         phone = contacts.get("phone")
         email = contacts.get("email")
-
-        # Проверка на None перед форматированием дат
         birthday_str = data_row[4].strftime("%d.%m.%Y") if data_row[4] else "-"
         firstday_str = data_row[5].strftime("%d.%m.%Y") if data_row[5] else "-"
-
         return textwrap.dedent(f'''
                 Нашёл первое совпадение:
 
@@ -503,28 +567,18 @@ class DbResponseParser:
     def parse_birthday_results(data_list: list) -> str:
         if not data_list:
             return "Дни рождения по вашим критериям не найдены."
-
-        # data_list[0][0] будет 'BirthdayList', его пропускаем
-        # Начинаем с data_list[0][1] для первой записи, если она одна
-        # или итерируемся по data_list, если их несколько
-
         messages = ["<b>Найдены следующие дни рождения:</b>"]
         for row in data_list:
-            # row[0] это 'BirthdayList', фактические данные начинаются с row[1]
-            # surname, name, father, birthday, department_name
             surname = row[1] or ""
             name = row[2] or ""
-            father = row[3] or ""  # Отчество
+            father = row[3] or ""
             birthday_date = row[4]
             department_name = row[5] or "Не указан"
-
             birthday_str = birthday_date.strftime("%d.%m") if isinstance(birthday_date, (
             datetime.date, datetime.datetime)) else "Дата не указана"
-
             person_info = f"{surname} {name} {father}".strip()
             messages.append(f"- {person_info} ({birthday_str}), Отдел: {department_name}")
-
-        if len(messages) == 1:  # Только заголовок
+        if len(messages) == 1:
             return "Дни рождения по вашим критериям не найдены."
         return "\n".join(messages)
 
@@ -532,29 +586,84 @@ class DbResponseParser:
     def parse_task_results(data_list: list) -> str:
         if not data_list:
             return "Задачи по вашим критериям не найдены."
-
         messages = ["<b>Найдены следующие задачи:</b>"]
         for row in data_list:
-            # task_name, description, deadline, status, priority, assignee_name, assignee_surname, project_name
             task_name_val = row[1] or "Без названия"
-            # description_val = row[2] or "" # Описание может быть длинным
-            deadline_val = row[3].strftime("%d.%m.%Y") if isinstance(row[3], (
-            datetime.date, datetime.datetime)) else "Нет дедлайна"
-            status_val = row[4] or "-"
-            priority_val = row[5] or "-"
-            assignee_name_val = row[6] or ""
-            assignee_surname_val = row[7] or ""
-            project_name_val = row[8] or "Без проекта"
-
+            description_val = row[2] or "Нет описания"
+            deadline_val = row[3].strftime("%d.%m.%Y %H:%M") if isinstance(row[3], (
+            datetime.date, datetime.datetime)) else "Нет даты"
+            status_val = "-"
+            priority_val = "-"
+            assignee_name_val = row[4] or ""
+            assignee_surname_val = row[5] or ""
+            project_name_val = row[6] or "Без проекта"
             assignee_full_name = f"{assignee_surname_val} {assignee_name_val}".strip()
-
             task_info = f"<b>{task_name_val}</b> (Проект: {project_name_val})"
+            task_info += f"\n  <i>Описание:</i> {description_val}"
             task_info += f"\n  Исполнитель: {assignee_full_name if assignee_full_name else '-'}"
-            task_info += f"\n  Дедлайн: {deadline_val}, Статус: {status_val}, Приоритет: {priority_val}"
+            task_info += f"\n  Дата/Дедлайн: {deadline_val}, Статус: {status_val}, Приоритет: {priority_val}"
             messages.append(task_info)
+        if len(messages) == 1:
+            return "Задачи по вашим критериям не найдены."
+        return "\n\n".join(messages)
+
+    @staticmethod
+    def parse_event_results(data_list: list) -> str:
+        if not data_list:
+            return "Мероприятия по вашим критериям не найдены."
+
+        messages = ["<b>Найдены следующие мероприятия:</b>"]
+        for row in data_list:
+            # Индексы соответствуют select_fields в search_event:
+            # row[0] - 'EventList' (маркер)
+            # row[1] - event_name
+            # row[2] - event_begin (TIMESTAMPTZ)
+            # row[3] - event_duration (INTERVAL)
+            # row[4] - category_name
+            # row[5] - event_description
+            # row[6] - organizer_name
+            # row[7] - organizer_surname
+
+            event_name = row[1] or "Без названия"
+            event_begin_dt = row[2]  # datetime.datetime object
+            event_duration_td = row[3]  # datetime.timedelta object
+            category_name = row[4] or "Не указана"
+            description = row[5] or "Нет описания"
+            organizer_name = row[6] or ""
+            organizer_surname = row[7] or ""
+
+            organizer_full_name = f"{organizer_surname} {organizer_name}".strip()
+            if not organizer_full_name:
+                organizer_full_name = "Не указан"
+
+            begin_str = event_begin_dt.strftime("%d.%m.%Y в %H:%M") if event_begin_dt else "Время не указано"
+
+            duration_str = ""
+            if event_duration_td:
+                hours, remainder = divmod(event_duration_td.total_seconds(), 3600)
+                minutes, _ = divmod(remainder, 60)
+                if hours > 0 and minutes > 0:
+                    duration_str = f"{int(hours)} ч {int(minutes)} мин"
+                elif hours > 0:
+                    duration_str = f"{int(hours)} ч"
+                elif minutes > 0:
+                    duration_str = f"{int(minutes)} мин"
+                else:  # если очень короткое, покажем в секундах или пропустим
+                    if event_duration_td.total_seconds() > 0:
+                        duration_str = f"{int(event_duration_td.total_seconds())} сек"
+
+            event_info = f"<b>{event_name}</b> (Категория: {category_name})"
+            event_info += f"\n  <i>Начало:</i> {begin_str}"
+            if duration_str:
+                event_info += f", <i>Длительность:</i> {duration_str}"
+            event_info += f"\n  <i>Организатор:</i> {organizer_full_name}"
+            if description and description != "Нет описания":
+                event_info += f"\n  <i>Описание:</i> {textwrap.shorten(description, width=100, placeholder='...')}"  # Сокращаем длинное описание
+
+            messages.append(event_info)
 
         if len(messages) == 1:  # Только заголовок
-            return "Задачи по вашим критериям не найдены."
+            return "Мероприятия по вашим критериям не найдены."
         return "\n\n".join(messages)
 
 ================================================================================
@@ -667,7 +776,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception(f"Произошла непредвиденная ошибка: {e}")  # Логируем полный стектрейс
         message = "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
-
+    await update.message.reply_text(str(sql_query), reply_markup=markup, parse_mode=ParseMode.HTML)
     await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
