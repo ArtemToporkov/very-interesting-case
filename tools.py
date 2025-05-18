@@ -104,7 +104,7 @@ def gather_files_to_txt(root_folder, output_filename="combined_code.txt", ignore
 
 if __name__ == "__main__":
     # --- Настройки ---
-    target_folder = r"D:\Document\SecCourseMATMEX\ml\34\very-interesting-case"  # Текущая папка. Можно указать абсолютный или относительный путь, например "my_project_folder"
+    target_folder = r"D:\wonderfulprojects\very-interesting-case"  # Текущая папка. Можно указать абсолютный или относительный путь, например "my_project_folder"
     # target_folder = "C:/Users/YourUser/Projects/MyAwesomeProject"
 
     output_file_name = "project_code_combined.txt"  # Имя итогового файла

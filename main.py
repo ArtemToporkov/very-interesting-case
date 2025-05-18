@@ -104,7 +104,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception(f"Произошла непредвиденная ошибка: {e}")  # Логируем полный стектрейс
         message = "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
-
     await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
