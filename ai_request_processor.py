@@ -1,6 +1,4 @@
 import requests
-import json
-
 
 class AiRequestProcessor:
     def __init__(self, base_url: str):
