@@ -14,9 +14,9 @@ from database import Database
 
 
 DB_CONFIG = {
-        "dbname": "interesnich@localhost",
+        "dbname": "interesnich",
         "user": "postgres",
-        "password": "123",
+        "password": "postgres", # TODO: вставьте потом свой пароль
         "host": "localhost",
         "port": "5432"
     }
