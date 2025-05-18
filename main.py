@@ -28,6 +28,9 @@ DB_CONFIG = {
 
 db = Database(**DB_CONFIG)
 
+allowed_telegram_ids = db.execute_query(f"select * from \"Authentication\"", fetch=True)
+allowed_telegram_ids = [i[0] for i in allowed_telegram_ids]
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -43,8 +46,14 @@ markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
     await update.message.reply_text(
-        "Добро пожаловать! Я помогу вам найти информацию о сотрудниках, мероприятиях, задачах и днях рождения. Нажмите /help, чтобы узнать больше.",
+        f"""
+Добро пожаловать! Я помогу вам найти информацию о сотрудниках, мероприятиях, задачах и днях рождения. 
+Нажмите /help, чтобы узнать больше.
+
+{"Вы авторизованы как сотрудник" if user_id in allowed_telegram_ids else "Вы авторизованы как гость."}
+""",
         reply_markup=markup
     )
 
@@ -68,11 +77,29 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     original_text = update.message.text
+    db.ensure_connection()
+
     logger.info(f"Получен оригинальный запрос от пользователя: {original_text}")
 
     try:
         # Шаг 1: Отправляем ОРИГИНАЛЬНЫЙ текст в Rasa NLU
         ai_response = ai_request_processor.process_query(original_text)
+        intent_name = ai_response.get("intent", {}).get("name")
+        if intent_name == 'greet':
+            await update.message.reply_text("Привет! Задай вопрос и я что-нибудь найду.", reply_markup=markup, parse_mode=ParseMode.HTML)
+            return
+        if intent_name == 'goodbye':
+            await update.message.reply_text("Пока! Очень жаль с тобой прощаться...", reply_markup=markup, parse_mode=ParseMode.HTML)
+            return
+        if intent_name == 'affirm':
+            await update.message.reply_text("Ты что-то подтвердил.", reply_markup=markup, parse_mode=ParseMode.HTML)
+            return
+        if intent_name == 'deny':
+            await update.message.reply_text("Ты что-то отклонил.", reply_markup=markup, parse_mode=ParseMode.HTML)
+            return
+
+
+
         logger.info(
             f"Ответ от NLU (на основе оригинального текста): {json.dumps(ai_response, ensure_ascii=False, indent=2)}")
 
@@ -159,7 +186,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception(f"Произошла непредвиденная ошибка: {e}")
         message = "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
-    await update.message.reply_text(str(sql_query), reply_markup=markup, parse_mode=ParseMode.HTML)
+    # await update.message.reply_text(str(sql_query), reply_markup=markup, parse_mode=ParseMode.HTML)
     await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
