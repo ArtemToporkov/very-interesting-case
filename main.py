@@ -1,4 +1,7 @@
+import json
 import logging
+import textwrap
+
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
@@ -12,20 +15,17 @@ from telegram.ext import (
 from ai_request_processor import AiRequestProcessor
 from database_query_parser import DbQueryParser
 from db_response_parser import DbResponseParser
-
 from database import Database
 
-
 DB_CONFIG = {
-        "dbname": "interesich",
-        "user": "cock_userr",
-        "password": "ifconfigroute-3n", # TODO: вставьте потом свой пароль
-        "host": "51.250.112.217",
-        "port": "5432"
-    }
+    "dbname": "interesich",
+    "user": "cock_userr",
+    "password": "ifconfigroute-3n",
+    "host": "51.250.112.217",
+    "port": "5432"
+}
 
 db = Database(**DB_CONFIG)
-
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,9 +33,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ai_request_processor = AiRequestProcessor(base_url="http://localhost:5005/model/parse") # TODO: изменить потом адрес
+# Убедитесь, что Rasa NLU сервер запущен на этом адресе и порту
+ai_request_processor = AiRequestProcessor(base_url="http://localhost:5005/model/parse")
 
-BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'
+BOT_TOKEN = '7757580544:AAHMXO0sgFFvNJMIDksbxqc9zYHrNNGo-rA'  # Ваш токен
 
 reply_keyboard = [['/help']]
 markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
@@ -43,34 +44,68 @@ markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Добро пожаловать! Нажмите /help, чтобы узнать, что я умею.",
+        "Добро пожаловать! Я помогу вам найти информацию о сотрудниках, мероприятиях, задачах и днях рождения. Нажмите /help, чтобы узнать больше.",
         reply_markup=markup
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+Вы можете спросить меня:
+- "Найди Иванова Петра"
+- "Какие мероприятия завтра?"
+- "У кого день рождения в июне?"
+- "Мои задачи на сегодня"
+- "Свободен ли я завтра в 10?"
+
+Просто напишите ваш вопрос в свободной форме!
+    """
     await update.message.reply_text(
-        "Отправьте запрос, а я что-нибудь найду.",
+        textwrap.dedent(help_text),
         reply_markup=markup
     )
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    logger.info(f"Получен запрос от пользователя: {text}")
     try:
         ai_response = ai_request_processor.process_query(text)
-        sql_query = DbQueryParser.parse(ai_response)
-        result = db.execute_query(query=sql_query, fetch=True)
-        if result is None:
-            message = "Извините, я ничего не нашёл..."
+        logger.info(f"Ответ от NLU: {json.dumps(ai_response, ensure_ascii=False, indent=2)}")
+
+        query_data = DbQueryParser.parse(ai_response)
+
+        sql_query = None
+        query_params = None
+
+        if isinstance(query_data, tuple):
+            sql_query, query_params = query_data
+        else:  # Для обратной совместимости со старыми методами, возвращающими только строку
+            sql_query = query_data
+            query_params = None
+
+        logger.info(f"Сформирован SQL: {sql_query} с параметрами: {query_params}")
+
+        db_result = db.execute_query(query=sql_query, params=query_params, fetch=True)
+
+        if not db_result:  # Проверяем, если результат пустой или None
+            message = "По вашему запросу ничего не найдено."
+            logger.info("БД не вернула результатов.")
         else:
-            message = DbResponseParser.parse_into_message(result[0])
+            logger.info(f"Результат из БД: {db_result}")
+            message = DbResponseParser.parse_into_message(db_result)
+
     except requests.exceptions.RequestException as e:
-        await update.message.reply_text("Не удалось обработать запрос нейросетью.", reply_markup=markup)
+        logger.error(f"Ошибка при обращении к Rasa NLU API: {e}")
+        message = "Извините, не удалось связаться с сервисом распознавания. Попробуйте позже."
+    except ValueError as e:  # Для ошибок парсинга или отсутствия данных
+        logger.warning(f"Ошибка обработки запроса: {e}")
+        message = f"Не удалось обработать ваш запрос: {e}"
     except Exception as e:
-        await update.message.reply_text(f"Что-то пошло не так при составлении запроса: {e}", reply_markup=markup)
-    else:
-        await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
+        logger.exception(f"Произошла непредвиденная ошибка: {e}")  # Логируем полный стектрейс
+        message = "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
+
+    await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
 
 def main():
@@ -88,4 +123,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
