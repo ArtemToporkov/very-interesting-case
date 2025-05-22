@@ -98,17 +98,17 @@ class DbResponseParser:
             # row[0] - 'EventList' (маркер)
             # row[1] - event_name
             # row[2] - event_begin (TIMESTAMPTZ)
-            # row[3] - event_end (TIMESTAMPTZ или None) <--- ИЗМЕНЕНО
+            # row[3] - event_end (TIMESTAMPTZ или None)
             # row[4] - category_name
             # row[5] - event_description (если полное имя "Description")
             # row[6] - organizer_name
             # row[7] - organizer_surname
 
             event_name = row[1] or "Без названия"
-            event_begin_dt = row[2]  # datetime.datetime object
-            event_end_dt = row[3]  # datetime.datetime object or None <--- ПОЛУЧАЕМ event_end
+            event_begin_dt = row[2]
+            event_end_dt = row[3]
             category_name = row[4] or "Не указана"
-            description = row[5] or "Нет описания"  # Убедитесь, что имя поля в БД - "Description"
+            description = row[5] or "Нет описания"
             organizer_name = row[6] or ""
             organizer_surname = row[7] or ""
 
@@ -118,10 +118,9 @@ class DbResponseParser:
 
             begin_str = event_begin_dt.strftime("%d.%m.%Y в %H:%M") if event_begin_dt else "Время начала не указано"
             end_str = event_end_dt.strftime(
-                "%d.%m.%Y в %H:%M") if event_end_dt else ""  # Время окончания может отсутствовать
+                "%d.%m.%Y в %H:%M") if event_end_dt else ""
 
             duration_str = ""
-            # Вычисляем длительность, если есть и начало, и конец
             if event_begin_dt and event_end_dt and event_end_dt > event_begin_dt:
                 event_duration_td = event_end_dt - event_begin_dt
                 hours, remainder = divmod(event_duration_td.total_seconds(), 3600)
@@ -132,12 +131,12 @@ class DbResponseParser:
                     duration_str = f"{int(hours)} ч"
                 elif minutes > 0:
                     duration_str = f"{int(minutes)} мин"
-                elif event_duration_td.total_seconds() > 0:  # Если длительность < 1 минуты, но > 0
+                elif event_duration_td.total_seconds() > 0:
                     duration_str = f"{int(event_duration_td.total_seconds())} сек"
 
             event_info = f"<b>{event_name}</b> (Категория: {category_name})"
             event_info += f"\n  <i>Начало:</i> {begin_str}"
-            if end_str and not duration_str:  # Если есть время окончания, но длительность не вычислена (например, end = begin)
+            if end_str and not duration_str:
                 event_info += f"\n  <i>Окончание:</i> {end_str}"
             elif duration_str:
                 event_info += f", <i>Длительность:</i> {duration_str}"

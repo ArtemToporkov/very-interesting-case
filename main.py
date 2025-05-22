@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 import textwrap
@@ -19,7 +20,7 @@ from database_query_parser import DbQueryParser
 from db_response_parser import DbResponseParser
 from text_normalizer import lemmatize_entity_value
 
-DB_CONFIG = {
+DB_CONFIG_EXAMPLE = {
     "dbname": "interesich",
     "user": "cock_userr",
     "password": "ifconfigroute-3n",
@@ -27,7 +28,7 @@ DB_CONFIG = {
     "port": "5432"
 }
 
-db = Database(**DB_CONFIG)
+db = Database(**DB_CONFIG_EXAMPLE)
 
 allowed_telegram_ids = db.execute_query(f"select * from \"Authentication\"", fetch=True)
 allowed_telegram_ids = [i[0] for i in allowed_telegram_ids]
@@ -40,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 ai_request_processor = AiRequestProcessor(base_url="http://localhost:5005/model/parse")
 
-BOT_TOKEN = '7947739921:AAG5dl3g0nLRIftfQJYSq4vrZcwoWS805ks'
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 reply_keyboard = [['/help']]
 markup = ReplyKeyboardMarkup(reply_keyboard, resize_keyboard=True)
