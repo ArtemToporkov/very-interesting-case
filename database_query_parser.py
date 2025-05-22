@@ -1,5 +1,3 @@
-# Файл: database_query_parser.py
-# Содержимое:
 import datetime
 from psycopg2 import sql
 import logging
@@ -348,16 +346,14 @@ class DbQueryParser:
     @staticmethod
     def check_task(data: dict):
         entities = DbQueryParser._entities_to_dict(data.get('entities', []))
-        # --- НАЧАЛО ИСПРАВЛЕНИЯ ПСЕВДОНИМОВ ---
         select_fields = [
             sql.SQL('tsk."Name" AS "task_name"'),
-            sql.SQL('tsk."Description" AS "task_description"'),  # Предполагается, что Description есть
+            sql.SQL('tsk."Description" AS "task_description"'),
             sql.SQL('tsk."Begin" AS "task_deadline"'),
             sql.SQL('emp_assignee."Name" AS "assignee_name"'),
             sql.SQL('emp_assignee."Surname" AS "assignee_surname"'),
             sql.SQL('prj."Name" AS "project_name"')
         ]
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ПСЕВДОНИМОВ ---
         from_table = sql.SQL('FROM "Task" as tsk')
         joins = [
             sql.SQL('LEFT JOIN "Employees" as emp_assignee ON emp_assignee."Employee_Id" = tsk."EmployeeId"'),

@@ -3,6 +3,9 @@ import json
 import logging
 import textwrap
 
+from rasa_sdk import Action, Tracker
+from rasa_sdk.executor import CollectingDispatcher
+
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
