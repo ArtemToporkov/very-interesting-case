@@ -3,7 +3,6 @@ import logging
 import textwrap
 
 import requests
-from dotenv import load_dotenv
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -13,11 +12,12 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+
 from ai_request_processor import AiRequestProcessor
+from database import Database
 from database_query_parser import DbQueryParser
 from db_response_parser import DbResponseParser
-from database import Database
-from text_normalizer import lemmatize_entity_value  # <--- ИЗМЕНИЛИ ИМПОРТ
+from text_normalizer import lemmatize_entity_value
 
 DB_CONFIG = {
     "dbname": "interesich",
@@ -62,11 +62,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = """
 Вы можете спросить меня:
-- "Найди Иванова Петра"
-- "Какие мероприятия завтра?"
+- "Найди Волкова Андрея"
+- "Какие мероприятия на неделе?"
 - "У кого день рождения в июне?"
-- "Мои задачи на сегодня"
-- "Свободен ли я завтра в 10?"
+- "Задачи Алексея"
 
 Просто напишите ваш вопрос в свободной форме!
     """
@@ -83,14 +82,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Получен оригинальный запрос от пользователя: {original_text}")
 
     try:
-        # Шаг 1: Отправляем ОРИГИНАЛЬНЫЙ текст в Rasa NLU
         ai_response = ai_request_processor.process_query(original_text)
         intent_name = ai_response.get("intent", {}).get("name")
         if intent_name == 'greet':
-            await update.message.reply_text("Привет! Задай вопрос и я что-нибудь найду.", reply_markup=markup, parse_mode=ParseMode.HTML)
+            await update.message.reply_text("Привет! Задай вопрос и я что-нибудь найду.", reply_markup=markup,
+                                            parse_mode=ParseMode.HTML)
             return
         if intent_name == 'goodbye':
-            await update.message.reply_text("Пока! Очень жаль с тобой прощаться...", reply_markup=markup, parse_mode=ParseMode.HTML)
+            await update.message.reply_text("Пока! Очень жаль с тобой прощаться...", reply_markup=markup,
+                                            parse_mode=ParseMode.HTML)
             return
         if intent_name == 'affirm':
             await update.message.reply_text("Ты что-то подтвердил.", reply_markup=markup, parse_mode=ParseMode.HTML)
@@ -99,29 +99,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Ты что-то отклонил.", reply_markup=markup, parse_mode=ParseMode.HTML)
             return
 
-
-
         logger.info(
-            f"Ответ от NLU (на основе оригинального текста): {json.dumps(ai_response, ensure_ascii=False, indent=2)}")
-
-        # Шаг 2: Лемматизация значений ВЫБРАННЫХ сущностей перед передачей в DbQueryParser
-        # Это делается, если EntitySynonymMapper в Rasa не покрывает все случаи или
-        # если DbQueryParser ожидает строго лемматизированные значения для определенных полей.
+            f"Ответ от NLU (на основе оригинального текста): {json.dumps(ai_response, ensure_ascii=False, indent=2)}"
+        )
 
         entities_from_nlu = ai_response.get('entities', [])
-
-        # Список типов сущностей, значения которых мы хотим лемматизировать.
-        # ВАЖНО: Тщательно выберите, какие сущности лемматизировать.
-        # Имена, названия проектов, даты, числовые значения обычно НЕ лемматизируют.
-        # EntitySynonymMapper в Rasa — предпочтительный способ канонизации.
-        # Эта лемматизация здесь — как дополнительный слой, если он действительно нужен.
         entity_types_to_lemmatize_values = {
-            "department",  # "отдела разработки" -> "отдел разработка"
-            "skill",  # "на Python" -> "на python" (если EntitySynonymMapper не настроен на каноническую форму "python")
-            "event_category",  # "корпоративные тренинги" -> "корпоративный тренинг"
-            "birthday_specifier", # Например, "в июне". Логика парсинга дат в DbQueryParser может быть чувствительна. Осторожно!
-            "task_status",        # Обычно это уже ключевые слова "невыполненные", "в процессе"
-            "task_priority",      # "высокий", "низкий"
+            "department",
+            "skill",
+            "event_category",
+            "birthday_specifier",
+            "task_status",
+            "task_priority",
             "task_tag",
             "name"
         }
@@ -131,35 +120,26 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for entity_data in entities_from_nlu:
                 entity_type = entity_data.get('entity')
                 original_value = entity_data.get('value')
-
-                # Копируем сущность, чтобы не изменять оригинальный ai_response напрямую, если он используется где-то еще
                 current_entity = entity_data.copy()
 
                 if entity_type in entity_types_to_lemmatize_values and original_value:
                     lemmatized_val = lemmatize_entity_value(original_value)
-                    if lemmatized_val != original_value:  # Логируем, если было изменение
+                    if lemmatized_val != original_value:
                         logger.info(
                             f"Лемматизация значения сущности типа '{entity_type}': '{original_value}' -> '{lemmatized_val}'")
                     current_entity['value'] = lemmatized_val
 
                 processed_entities_for_parser.append(current_entity)
 
-        # Создаем новый объект для DbQueryParser, чтобы передать обработанные сущности
-        # и сохранить оригинальную структуру ответа NLU
         payload_for_db_parser = {
-            "text": ai_response.get("text"),  # Это оригинальный текст пользователя
+            "text": ai_response.get("text"),
             "intent": ai_response.get("intent"),
-            "entities": processed_entities_for_parser,  # Здесь лемматизированные значения для выбранных типов
+            "entities": processed_entities_for_parser,
             "intent_ranking": ai_response.get("intent_ranking"),
             "response_selector": ai_response.get("response_selector")
-            # Можно добавить 'original_user_text': original_text, если нужно где-то дальше
         }
-        # --- КОНЕЦ: Лемматизация значений сущностей ---
 
         query_data = DbQueryParser.parse(payload_for_db_parser)
-
-        sql_query = None
-        query_params = None
 
         if isinstance(query_data, tuple):
             sql_query, query_params = query_data
@@ -187,6 +167,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception(f"Произошла непредвиденная ошибка: {e}")
         message = "Произошла внутренняя ошибка. Пожалуйста, попробуйте позже."
+
     # await update.message.reply_text(str(sql_query), reply_markup=markup, parse_mode=ParseMode.HTML)
     await update.message.reply_text(message, reply_markup=markup, parse_mode=ParseMode.HTML)
 
@@ -196,9 +177,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     logger.info("Бот запущен...")
     app.run_polling()

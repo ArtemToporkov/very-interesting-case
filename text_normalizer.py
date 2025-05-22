@@ -1,5 +1,5 @@
-import pymorphy3
 import string
+import pymorphy3
 
 morph = pymorphy3.MorphAnalyzer()
 
@@ -17,23 +17,17 @@ def lemmatize_entity_value(text_value: str) -> str:
     if not text_value:
         return ""
 
-    # 1. Приведение к нижнему регистру
     text_lower = text_value.lower()
-
-    # 2. Удаление пунктуации (можно сделать опциональным, если пунктуация важна для каких-то значений)
-    # Для большинства значений сущностей, передаваемых в SQL, удаление пунктуации безопасно или полезно.
     translator = str.maketrans('', '', string.punctuation)
     text_without_punctuation = text_lower.translate(translator)
-
-    # 3. Токенизация
     words = text_without_punctuation.split()
 
     lemmatized_words = []
     for word in words:
-        if not word.strip():  # Пропускаем пустые слова
+        if not word.strip():
             continue
 
-        parsed_word = morph.parse(word)[0]  # Берем первый (наиболее вероятный) разбор
+        parsed_word = morph.parse(word)[0]
         normal_form = parsed_word.normal_form
         lemmatized_words.append(normal_form)
 
@@ -41,17 +35,16 @@ def lemmatize_entity_value(text_value: str) -> str:
 
 
 if __name__ == '__main__':
-    # Примеры использования
     test_values = [
         "отдела разработки",
         "корпоративные тренинги",
         "на Python",
         "в июне",
-        "Иванова Петра",  # Имена лучше не лемматизировать так агрессивно
-        "Проект Альфа",  # Названия проектов тоже
-        "20 мая",  # Даты
+        "Иванова Петра",
+        "Проект Альфа",
+        "20 мая",
         "на этой неделе",
-        "Мои невыполненные задачи",  # Для примера, хотя это скорее фраза из запроса
+        "Мои невыполненные задачи",
         "завтра в 10 утра"
     ]
 
@@ -61,5 +54,5 @@ if __name__ == '__main__':
         print(f"Лемматизировано: '{lemmatized}'")
         print("-" * 30)
 
-    print(f"Оригинал: 'IT отдел'")  # Пример, где EntitySynonymMapper Rasa может быть лучше
-    print(f"Лемматизировано: '{lemmatize_entity_value('IT отдел')}'")  # -> it отдел
+    print(f"Оригинал: 'IT отдел'")
+    print(f"Лемматизировано: '{lemmatize_entity_value('IT отдел')}'")
