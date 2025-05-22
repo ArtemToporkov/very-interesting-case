@@ -3,9 +3,6 @@ import json
 import logging
 import textwrap
 
-from rasa_sdk import Action, Tracker
-from rasa_sdk.executor import CollectingDispatcher
-
 import requests
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.constants import ParseMode
@@ -17,11 +14,8 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from ai_request_processor import AiRequestProcessor
-from database import Database
-from database_query_parser import DbQueryParser
-from db_response_parser import DbResponseParser
-from text_normalizer import lemmatize_entity_value
+from interesch import AiRequestProcessor, Database, DbQueryParser, DbResponseParser, lemmatize_entity_value
+
 
 DB_CONFIG_EXAMPLE = {
     "dbname": "interesich",

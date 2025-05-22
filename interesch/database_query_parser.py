@@ -69,17 +69,15 @@ class DbQueryParser:
         if not name_val:
             raise ValueError("Что-то пошло не так...")
 
-        # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
         select_fields = [
             sql.SQL('emp."Surname"'), sql.SQL('emp."Name"'), sql.SQL('emp."Father"'),
             sql.SQL('emp."Birthday"'), sql.SQL('emp."FirstDay"'),
-            sql.SQL('lng."Name" AS "LanguageName"'),  # AS используется внутри строки SQL
+            sql.SQL('lng."Name" AS "LanguageName"'),
             sql.SQL('rnk."Status" AS "RankStatus"'),
             sql.SQL('prj."Name" AS "ProjectName"'),
             sql.SQL('dprt."Name" AS "DepartmentName"'),
             sql.SQL('emp."Contacts"')
         ]
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
         from_table = sql.SQL('FROM "Employees" AS emp')
         joins = [
@@ -279,7 +277,7 @@ class DbQueryParser:
         entities = DbQueryParser._entities_to_dict(data.get('entities', []))
         select_fields = [
             sql.SQL('emp."Surname"'), sql.SQL('emp."Name"'), sql.SQL('emp."Father"'),
-            sql.SQL('emp."Birthday"'), sql.SQL('dprt."Name" AS "department_name"'),  # ИСПРАВЛЕНО: псевдоним в кавычках
+            sql.SQL('emp."Birthday"'), sql.SQL('dprt."Name" AS "department_name"'),
         ]
         from_table = sql.SQL('FROM "Employees" as emp')
         joins = [sql.SQL('LEFT JOIN "Department" as dprt ON dprt."Department_Id" = emp."DepartmentId"')]
